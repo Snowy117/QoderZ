@@ -47,6 +47,19 @@ inline constexpr std::size_t max_error_message_length = 1000;
   return code == "10605";
 }
 
+/// Qoder code 103 ("Duplicate request") means the same request is already queued or already
+/// answered. Repeating it cannot help, and it must never be classified as an auth failure.
+[[nodiscard]] constexpr bool is_duplicate_code(std::string_view code) noexcept {
+  return code == "103";
+}
+
+/// True for both a 103 code and a "Duplicate request" message, because the SSE path keeps only
+/// the classified status and message when it hands the event to the chat client.
+[[nodiscard]] bool is_duplicate_error(std::string_view code, std::string_view message) noexcept;
+
+/// Convenience overload for a classified Qoder error.
+[[nodiscard]] bool is_duplicate_error(qoder_error const& value) noexcept;
+
 /// Numeric codes the table treats as quota exhaustion: 110, 112–119 and 122.
 [[nodiscard]] constexpr bool is_quota_code(int code) noexcept {
   return code == 110 || (code >= 112 && code <= 119) || code == 122;

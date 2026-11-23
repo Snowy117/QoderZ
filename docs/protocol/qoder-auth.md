@@ -345,6 +345,7 @@ token 选择：PAT 账户且没有 device token 时用 `access`；否则优先 `
 | 401/403、code 105、刷新被拒 | 认证错误 | 3 |
 | 额度 code 110 / 112–119 / 122、HTTP 429 或 message 含 quota | 额度错误 | 4 |
 | 10605 / queue.isQueued / serviceAvailable=false | 忙碌 | 4 |
+| code 103 / message 含 `duplicate request` | 忙碌（终止，不再重发） | 4 |
 | 406/416/430/80411/80412/100400–100403 | 请求错误 | 4 |
 | 其它上游/传输失败 | 上游错误 | 4 |
 

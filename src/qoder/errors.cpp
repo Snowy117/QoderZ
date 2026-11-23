@@ -256,6 +256,16 @@ qoder_error classify(int http_status, envelope const& parsed) {
                        .m_message = message,
                        .m_retry_after = retry_after};
   }
+  // 103 is Qoder's "Duplicate request": the same request is already queued or already answered.
+  // It is busy, but the chat client must stop rather than resend, and it must never cool the
+  // account down as if the token were rejected.
+  if (is_duplicate_code(code) || contains_ignore_case(message, "duplicate request")) {
+    return qoder_error{.m_kind = error_kind::busy,
+                       .m_status = busy_status,
+                       .m_code = code,
+                       .m_message = message,
+                       .m_retry_after = default_busy_retry_after};
+  }
   if (is_auth_code(code)) {
     return qoder_error{.m_kind = error_kind::auth,
                        .m_status = auth_status,
@@ -304,6 +314,14 @@ std::string status_fallback(int status) {
 }
 
 } // namespace
+
+bool is_duplicate_error(std::string_view code, std::string_view message) noexcept {
+  return is_duplicate_code(code) || contains_ignore_case(message, "duplicate request");
+}
+
+bool is_duplicate_error(qoder_error const& value) noexcept {
+  return is_duplicate_error(value.m_code, value.m_message);
+}
 
 qoder_error from_response(int http_status, std::string_view body) {
   if (http_status < 400 || http_status > 599) {

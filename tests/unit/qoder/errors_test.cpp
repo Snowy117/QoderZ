@@ -125,6 +125,33 @@ TEST_CASE("401 and 403 without a code are auth failures", "[qoder][errors]") {
   CHECK(empty.m_message == "Qoder returned HTTP 401.");
 }
 
+TEST_CASE("103 and duplicate-request messages are busy, never auth", "[qoder][errors]") {
+  auto const duplicate = classify(403, R"({"code":"103","message":"Duplicate request"})");
+  CHECK(duplicate.m_kind == error_kind::busy);
+  CHECK(duplicate.m_status == 503);
+  CHECK(duplicate.m_code == "103");
+  CHECK(duplicate.m_retry_after == 30);
+  CHECK(qoderz::qoder::is_duplicate_error(duplicate));
+
+  auto const message_only = classify(403, R"({"message":"Duplicate request"})");
+  CHECK(message_only.m_kind == error_kind::busy);
+  CHECK(message_only.m_status == 503);
+
+  auto const upper_case = classify(403, R"({"message":"DUPLICATE REQUEST"})");
+  CHECK(upper_case.m_kind == error_kind::busy);
+
+  auto const auth_status = classify(401, R"({"code":"103"})");
+  CHECK(auth_status.m_kind == error_kind::busy);
+  CHECK(auth_status.m_status == 503);
+
+  auto const bare = from_status(503, "Duplicate request");
+  CHECK(bare.m_kind == error_kind::busy);
+
+  CHECK(qoderz::qoder::is_duplicate_code("103"));
+  CHECK_FALSE(qoderz::qoder::is_duplicate_code("104"));
+  CHECK_FALSE(qoderz::qoder::is_duplicate_error(classify(403, R"({"message":"nope"})")));
+}
+
 TEST_CASE("a 10605 nested in a 401 message is still busy", "[qoder][errors]") {
   auto const nested =
       classify(401, R"({"code":"401","message":"{\"code\":\"10605\",\"message\":\"queued\",)"

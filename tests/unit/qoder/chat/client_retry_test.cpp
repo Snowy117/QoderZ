@@ -172,7 +172,42 @@ TEST_CASE("the retry logs carry no credential, body or prompt", "[qoder][chat][c
   REQUIRE(outcome->has_value());
   CHECK(logged.find("test-access-token-not-real") == std::string::npos);
   CHECK(logged.find("Bearer COSY") == std::string::npos);
-  CHECK(logged.find("request_id") == std::string::npos);
   CHECK(logged.find("site=qoder") != std::string::npos);
+  CHECK(logged.find(std::string(256, 'x')) == std::string::npos);
   CHECK(logged.find("uid=uid-test-not-real") != std::string::npos);
+}
+
+TEST_CASE("a duplicate request after a queue retry is busy, not auth",
+          "[qoder][chat][client][retry]") {
+  asio::io_context io;
+  scripted_stub stub;
+  stub.m_answers.push_back(text_response(200, "data: " + queue_frame() + "\n"));
+  std::string const duplicate =
+      R"({"statusCodeValue":403,"body":"{\"code\":\"103\",\"message\":\"Duplicate request\"}"})";
+  stub.m_answers.push_back(text_response(200, "data: " + duplicate + "\n"));
+  auto server = stub.make(io);
+  REQUIRE(server.start().has_value());
+
+  qoderz::net::http_client http{io};
+  passthrough_wrapper wrapper;
+  fake_clock time;
+  chat_client client{http, wrapper, time, tight_budget(5)};
+
+  auto request = make_request(server);
+  request.m_body_json =
+      qoderz::json{
+          {"request_id", std::string{"rid-test-1"}},
+          {"request_set_id", std::string{"rset-test-1"}},
+          {"session_id", std::string{"session-test-1"}},
+          {"business", qoderz::json{{"stage", std::string{"start"}}}},
+      }
+          .dump();
+
+  auto outcome = run_awaitable(io, client.open(std::move(request)), 30s);
+  REQUIRE(outcome.has_value());
+  REQUIRE(!outcome->has_value());
+  CHECK(outcome->error().m_kind == error_kind::busy);
+  CHECK(outcome->error().m_http_status == 503);
+  CHECK(stub.m_requests.size() == 2);
+  CHECK(stub.m_requests[0].m_body == stub.m_requests[1].m_body);
 }

@@ -189,6 +189,9 @@ Qoder 没有队列状态轮询端点，也不读上游 `Retry-After` 响应头�
 - **重发完全相同的已签名 body 与请求头**，不刷新 `Cosy-Date`；
 - 预算耗尽或等待为 0 → 返回 busy。
 
+上游对同一请求返回 103 `Duplicate request` 时仍归为 busy，但它是终止信号：同一请求
+已经入队或已经完成，再发只会继续被拒，因此客户端立即结束重试，也不把账号判成认证失败。
+
 认证、额度、请求错误、上游错误、传输错误都不在客户端内部重试；前两者由账户池换账户。
 
 ## 6. SSE 外壳
@@ -273,6 +276,7 @@ HTTP 非 2xx 时读 body（上限 1 MiB）后映射；流内错误则把外壳�
 | 条件 | 分类 | 下游状态 / type / code |
 | --- | --- | --- |
 | code 10605 / queue.isQueued / serviceAvailable=false | busy | 503 / `server_busy` / 503 |
+| code 103 / message 含 `duplicate request` | busy（终止，不再重发） | 503 / `server_busy` / 503 |
 | code 105 | auth | 401 / `authentication_error` / 401 |
 | code ∈ {110} ∪ [112,119] ∪ {122} | quota | 429 / `insufficient_quota` / 429 |
 | code ∈ {406,416,430,80411,80412,100400–100403} | request | 400 / `invalid_request_error` / 400 |

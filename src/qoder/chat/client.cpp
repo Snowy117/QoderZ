@@ -1,5 +1,6 @@
 #include "qoder/chat/client.hpp"
 
+#include "common/json.hpp"
 #include "common/log.hpp"
 #include "common/net/http_types.hpp"
 #include "qoder/chat/request.hpp"
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace qoderz::qoder::chat {
@@ -27,6 +29,51 @@ constexpr int default_queue_seconds = 30;
 
 std::chrono::seconds to_seconds(std::chrono::milliseconds value) {
   return std::chrono::duration_cast<std::chrono::seconds>(value);
+}
+
+constexpr std::size_t max_logged_message = 240;
+
+std::string truncate_utf8(std::string_view text, std::size_t limit) {
+  if (text.size() <= limit) {
+    return std::string{text};
+  }
+  std::size_t cut = limit;
+  while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0U) == 0x80U) {
+    --cut;
+  }
+  return std::string{text.substr(0, cut)};
+}
+
+/// Diagnostics only: the ids the upstream request was built with, never its prompt text.
+struct request_identity {
+  std::string m_request_id;
+  std::string m_request_set_id;
+  std::string m_session_id;
+  std::string m_stage;
+};
+
+std::string read_string(json const& object, std::string_view key) {
+  auto const found = object.find(std::string{key});
+  if (found == object.end() || !found->is_string()) {
+    return {};
+  }
+  return found->get<std::string>();
+}
+
+request_identity read_identity(std::string const& body) {
+  request_identity identity;
+  json const parsed = json::parse(body, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) {
+    return identity;
+  }
+  identity.m_request_id = read_string(parsed, "request_id");
+  identity.m_request_set_id = read_string(parsed, "request_set_id");
+  identity.m_session_id = read_string(parsed, "session_id");
+  auto const business = parsed.find("business");
+  if (business != parsed.end() && business->is_object()) {
+    identity.m_stage = read_string(*business, "stage");
+  }
+  return identity;
 }
 
 /// Reads a failed response's body, capped, so the classifier can see the queue state inside it.
@@ -80,6 +127,7 @@ boost::asio::awaitable<result<void>> chat_client::wait(std::chrono::milliseconds
 
 boost::asio::awaitable<result<std::unique_ptr<chat_stream>>>
 chat_client::open(upstream_request request) {
+  auto const identity = read_identity(request.m_body_json);
   auto signed_request = build_signed_request(request, m_wrapper, m_time.now_ms() / 1000);
   std::string{}.swap(request.m_body_json);
   if (!signed_request) {
@@ -91,6 +139,14 @@ chat_client::open(upstream_request request) {
   message.m_url = std::move(signed_request->m_url);
   message.m_headers = std::move(signed_request->m_headers);
   message.m_body = std::move(signed_request->m_wire_body);
+
+  log(log_level::debug, "chat request identity",
+      {{"site", request.m_site.m_site_id},
+       {"uid", request.m_account.m_uid},
+       {"request_id", identity.m_request_id},
+       {"request_set_id", identity.m_request_set_id},
+       {"session_id", identity.m_session_id},
+       {"stage", identity.m_stage}});
 
   auto const started = std::chrono::steady_clock::now();
   auto const deadline = started + m_options.m_total_budget;
@@ -114,8 +170,16 @@ chat_client::open(upstream_request request) {
       log(log_level::warn, "chat request failed",
           {{"site", request.m_site.m_site_id},
            {"uid", request.m_account.m_uid},
-           {"status", std::to_string(status)}});
-      if (failed.m_kind != error_kind::busy) {
+           {"status", std::to_string(status)},
+           {"code", failed.m_code},
+           {"message", truncate_utf8(failed.m_message, max_logged_message)},
+           {"request_id", identity.m_request_id},
+           {"request_set_id", identity.m_request_set_id},
+           {"session_id", identity.m_session_id},
+           {"stage", identity.m_stage},
+           {"attempt", std::to_string(attempt)}});
+      if (failed.m_kind != error_kind::busy ||
+          is_duplicate_error(failed.m_code, failed.m_message)) {
         co_return std::unexpected(std::move(failed));
       }
       last_busy = failed;
@@ -146,8 +210,16 @@ chat_client::open(upstream_request request) {
       log(log_level::warn, "chat stream failed before its first event",
           {{"site", request.m_site.m_site_id},
            {"uid", request.m_account.m_uid},
-           {"status", std::to_string(failed.m_http_status)}});
-      if (failed.m_kind != error_kind::busy) {
+           {"status", std::to_string(failed.m_http_status)},
+           {"code", failed.m_code},
+           {"message", truncate_utf8(failed.m_message, max_logged_message)},
+           {"request_id", identity.m_request_id},
+           {"request_set_id", identity.m_request_set_id},
+           {"session_id", identity.m_session_id},
+           {"stage", identity.m_stage},
+           {"attempt", std::to_string(attempt)}});
+      if (failed.m_kind != error_kind::busy ||
+          is_duplicate_error(failed.m_code, failed.m_message)) {
         co_return std::unexpected(std::move(failed));
       }
       last_busy = failed;
@@ -182,7 +254,12 @@ chat_client::open(upstream_request request) {
         {{"site", request.m_site.m_site_id},
          {"uid", request.m_account.m_uid},
          {"attempt", std::to_string(attempt)},
-         {"wait_seconds", std::to_string(to_seconds(delay).count())}});
+         {"wait_seconds", std::to_string(to_seconds(delay).count())},
+         {"code", last_busy->m_code},
+         {"message", truncate_utf8(last_busy->m_message, max_logged_message)},
+         {"request_id", identity.m_request_id},
+         {"request_set_id", identity.m_request_set_id},
+         {"stage", identity.m_stage}});
     auto waited = co_await wait(delay);
     if (!waited) {
       co_return std::unexpected(std::move(waited.error()));
@@ -190,6 +267,15 @@ chat_client::open(upstream_request request) {
   }
 
   if (last_busy.has_value()) {
+    log(log_level::warn, "chat request gave up on the upstream queue",
+        {{"site", request.m_site.m_site_id},
+         {"uid", request.m_account.m_uid},
+         {"attempt", std::to_string(attempt)},
+         {"code", last_busy->m_code},
+         {"message", truncate_utf8(last_busy->m_message, max_logged_message)},
+         {"request_id", identity.m_request_id},
+         {"request_set_id", identity.m_request_set_id},
+         {"stage", identity.m_stage}});
     co_return std::unexpected(std::move(*last_busy));
   }
   co_return std::unexpected(make_error(error_kind::busy, "The upstream queue never cleared."));

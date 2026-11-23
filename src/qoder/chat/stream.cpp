@@ -2,6 +2,7 @@
 
 #include "common/codec/random.hpp"
 #include "common/json.hpp"
+#include "common/log.hpp"
 #include "common/strings.hpp"
 #include "qoder/errors.hpp"
 
@@ -130,6 +131,19 @@ bool parse_integer(std::string_view text, int& out) noexcept {
 int as_int(json const& value, int fallback) noexcept {
   int out = fallback;
   return read_int(value, out) ? out : fallback;
+}
+
+/// Diagnostics only: the upstream error frame, capped, so the queue flags inside it are visible.
+std::string error_frame_excerpt(std::string_view text) {
+  constexpr std::size_t limit = 512;
+  if (text.size() <= limit) {
+    return std::string{text};
+  }
+  std::size_t cut = limit;
+  while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0U) == 0x80U) {
+    --cut;
+  }
+  return std::string{text.substr(0, cut)};
 }
 
 } // namespace
@@ -324,6 +338,8 @@ std::vector<protocol::chat_event> stream_parser::apply_body_string(std::string c
 
 std::vector<protocol::chat_event> stream_parser::failure_event(int status,
                                                                std::string const& text) {
+  log(log_level::debug, "chat upstream error frame",
+      {{"status", std::to_string(status)}, {"body", error_frame_excerpt(text)}});
   auto const error = to_error(from_response(status, text));
   protocol::chat_event event;
   event.m_kind = protocol::chat_event_kind::error;
