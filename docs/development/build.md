@@ -123,7 +123,7 @@ HTTP 模板对明文和 TLS 两种 stream 各实例化一遍，单独一个编�
 ./build/qoderz --help
 ```
 
-输出应包含 `qoderz 0.1.1`。
+输出应包含 `qoderz 0.1.2`。
 
 ## Nix 构建与运行
 

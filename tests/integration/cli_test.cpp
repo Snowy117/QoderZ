@@ -558,7 +558,7 @@ TEST_CASE("the serve startup summary goes to stderr and JSON to stdout", "[cli][
   CHECK(summary.at("mode") == "pool");
   CHECK(summary.at("upstream_loopback") == true);
   CHECK(summary.at("threads") == qoderz::cli::default_threads());
-  CHECK(run.m_err.str().find("qoderz 0.1.1") != std::string::npos);
+  CHECK(run.m_err.str().find("qoderz 0.1.2") != std::string::npos);
   CHECK(run.m_err.str().find("listen:") != std::string::npos);
   CHECK(run.m_out.str().find("listen:") == std::string::npos);
 

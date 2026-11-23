@@ -165,7 +165,7 @@ qoderz serve [--listen <url>] [--site <id>]
 - `qoderz` 无参数：打印版本、凭据文件路径、各站点账户数/默认账户，以及常用命令提示；
   不联网，退出 0。这比直接甩一屏帮助更友好。
 - `qoderz help <command>`：命令级帮助，包含 2–3 个示例和退出码说明。
-- `qoderz version` / `--version`：`qoderz 0.1.1`。
+- `qoderz version` / `--version`：`qoderz 0.1.2`。
 
 ## 9. 选择器与交互
 
